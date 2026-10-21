@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -16,6 +17,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
+import android.webkit.ConsoleMessage;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -69,6 +71,8 @@ public class PlayerActivity extends Activity {
     private TextView actionButton;
     private SettingsStore settings;
     private boolean rendererGone;
+    private boolean userTouchedGame;
+    private boolean startupTapAttempted;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -143,6 +147,9 @@ public class PlayerActivity extends Activity {
         webSettings.setAllowContentAccess(false);
         webSettings.setAllowFileAccessFromFileURLs(false);
         webSettings.setAllowUniversalAccessFromFileURLs(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        }
         webSettings.setSupportMultipleWindows(false);
         webSettings.setJavaScriptCanOpenWindowsAutomatically(false);
         webSettings.setMediaPlaybackRequiresUserGesture(false);
@@ -150,7 +157,22 @@ public class PlayerActivity extends Activity {
             webSettings.setSafeBrowsingEnabled(true);
         }
 
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setOnTouchListener((view, event) -> {
+            if (!startupTapAttempted && event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                userTouchedGame = true;
+            }
+            return false;
+        });
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                int priority = message.messageLevel() == ConsoleMessage.MessageLevel.ERROR
+                        ? Log.ERROR : Log.DEBUG;
+                Log.println(priority, "FlashArcade/Ruffle",
+                        message.message() + " (" + message.sourceId() + ":" + message.lineNumber() + ")");
+                return true;
+            }
+        });
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -166,6 +188,8 @@ public class PlayerActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 if (status != null && status.getParent() != null) root.removeView(status);
+                view.requestFocus();
+                view.postDelayed(() -> dispatchInitialCanvasTap(view), 1_500L);
             }
 
             @Override
@@ -192,6 +216,40 @@ public class PlayerActivity extends Activity {
         addControls();
         webView.loadUrl(createRunnerUrl(game.localFileName, game.title));
         webView.requestFocus();
+    }
+
+    private void dispatchInitialCanvasTap(WebView target) {
+        if (isFinishing() || rendererGone || target != webView
+                || userTouchedGame || startupTapAttempted
+                || target.getWidth() <= 0 || target.getHeight() <= 0) {
+            return;
+        }
+
+        // One best-effort tap helps SWFs that wait at a post-load screen. It is
+        // skipped if the player has already received a real tap from the user.
+        startupTapAttempted = true;
+        final float x = target.getWidth() / 2f;
+        final float y = target.getHeight() / 2f;
+        final long downTime = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(
+                downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0);
+        try {
+            target.dispatchTouchEvent(down);
+        } finally {
+            down.recycle();
+        }
+
+        target.postDelayed(() -> {
+            if (isFinishing() || rendererGone || target != webView) return;
+            long eventTime = SystemClock.uptimeMillis();
+            MotionEvent up = MotionEvent.obtain(
+                    downTime, eventTime, MotionEvent.ACTION_UP, x, y, 0);
+            try {
+                target.dispatchTouchEvent(up);
+            } finally {
+                up.recycle();
+            }
+        }, 90L);
     }
 
     private String createRunnerUrl(String localFileName, String title) {
@@ -246,6 +304,7 @@ public class PlayerActivity extends Activity {
         button.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
+                    userTouchedGame = true;
                     view.setAlpha(0.9f);
                     dispatchGameKey(keyCode, KeyEvent.ACTION_DOWN);
                     return true;

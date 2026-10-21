@@ -9,6 +9,7 @@
             android:name=".ui.GameActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
+            android:hardwareAccelerated="true"
             android:screenOrientation="sensorLandscape" />
         <activity
             android:name=".ui.SettingsActivity"

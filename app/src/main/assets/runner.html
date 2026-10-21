@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Flash Arcade Player</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      background: #080a0d;
+      --game-scale: 1;
+      --safe-margin: 0%;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #080a0d;
+      overscroll-behavior: none;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    #screen {
+      position: absolute;
+      inset: var(--safe-margin);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #080a0d;
+    }
+    #stage {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      transform: scale(var(--game-scale));
+      transform-origin: 50% 50%;
+    }
+    #player-host {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+    ruffle-player {
+      display: block;
+      width: 100%;
+      height: 100%;
+      outline: none;
+      touch-action: manipulation;
+    }
+    #failure {
+      display: none;
+      position: absolute;
+      z-index: 5;
+      left: 7%;
+      right: 7%;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      border: 1px solid #67494a;
+      border-radius: 12px;
+      padding: 12px 14px;
+      color: #f5d8d6;
+      background: rgba(39, 20, 21, .95);
+      font: 14px/1.4 system-ui, sans-serif;
+    }
+  </style>
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const swf = params.get("swf") || "";
+      const quality = ["low", "medium", "high"].includes(params.get("quality"))
+        ? params.get("quality") : "high";
+      const scale = ["showAll", "noBorder", "exactFit", "noScale"].includes(params.get("scale"))
+        ? params.get("scale") : "showAll";
+      const parsedScale = Number.parseFloat(params.get("gameScale") || "1");
+      const parsedMargin = Number.parseInt(params.get("safeMargin") || "0", 10);
+      const gameScale = Number.isFinite(parsedScale) && parsedScale > 0 ? parsedScale : 1;
+      const safeMargin = Number.isFinite(parsedMargin) ? Math.max(0, Math.min(30, parsedMargin)) : 0;
+      document.documentElement.style.setProperty("--game-scale", String(gameScale));
+      document.documentElement.style.setProperty("--safe-margin", safeMargin + "%");
+      document.title = params.get("title") || "Flash Arcade";
+
+      window.RufflePlayer = window.RufflePlayer || {};
+      window.RufflePlayer.config = {
+        autoplay: "on",
+        unmuteOverlay: "hidden",
+        quality,
+        scale,
+        salign: "C",
+        forceAlign: true,
+        forceScale: true,
+        letterbox: "on",
+        backgroundColor: "#080a0d",
+        logLevel: "error",
+        allowFullscreen: false,
+        allowNetworking: "internal",
+        contextMenu: false
+      };
+
+      window.addEventListener("error", event => {
+        if (!event.message) return;
+        const box = document.getElementById("failure");
+        if (box) {
+          box.textContent = "The Flash player reported a problem. Some SWF features may not be supported.";
+          box.style.display = "block";
+        }
+      });
+
+      window.addEventListener("DOMContentLoaded", async () => {
+        if (!/^\/games\/[0-9a-f-]+\.swf$/i.test(swf)) {
+          showFailure("The game file path is invalid.");
+          return;
+        }
+        try {
+          const api = window.RufflePlayer.newest();
+          const player = api.createPlayer();
+          player.setAttribute("aria-label", "Flash game");
+          player.tabIndex = 0;
+          document.getElementById("player-host").appendChild(player);
+          player.focus();
+          await player.ruffle().load({ url: swf, quality, scale });
+          player.focus();
+        } catch (error) {
+          showFailure("Ruffle could not start this game. It may use Flash features that are not supported.");
+          console.error(error);
+        }
+      });
+
+      function showFailure(message) {
+        const box = document.getElementById("failure");
+        if (box) {
+          box.textContent = message;
+          box.style.display = "block";
+        }
+      }
+    })();
+  </script>
+  <script src="/assets/ruffle/ruffle.js"></script>
+</head>
+<body>
+  <main id="screen">
+    <div id="stage"><div id="player-host"></div></div>
+    <div id="failure" role="alert"></div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,100 @@
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
+plugins {
+    id "com.android.application"
+}
+
+def ruffleVersion = "0.7.1"
+def ruffleSha256 = "ef12edbee135d581a9cd523837d746da30a07a64dbf1cf472d2e472c656f4b5e"
+def ruffleAssets = file("src/main/assets/ruffle")
+def ruffleArchive = layout.buildDirectory.file("downloads/ruffle-${ruffleVersion}-web-selfhosted.zip").get().asFile
+
+android {
+    namespace "com.flasharcade.launcher"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.flasharcade.launcher"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "androidx.activity:activity:1.10.1"
+    implementation "androidx.recyclerview:recyclerview:1.4.0"
+    implementation "androidx.webkit:webkit:1.13.0"
+    implementation "androidx.documentfile:documentfile:1.0.1"
+    implementation "androidx.room:room-runtime:2.7.2"
+    annotationProcessor "androidx.room:room-compiler:2.7.2"
+}
+
+tasks.register("fetchRufflePlayer") {
+    outputs.dir(ruffleAssets)
+    doLast {
+        def existingWasm = ruffleAssets.exists()
+                ? fileTree(ruffleAssets).matching { include("*.wasm") }.files
+                : [] as Set
+        if (new File(ruffleAssets, "ruffle.js").isFile() && !existingWasm.isEmpty()) {
+            logger.lifecycle("Using the existing Ruffle ${ruffleVersion} web runtime.")
+            return
+        }
+
+        ruffleArchive.parentFile.mkdirs()
+        ruffleAssets.mkdirs()
+        def downloadUrl = "https://github.com/ruffle-rs/ruffle/releases/download/v${ruffleVersion}/ruffle-${ruffleVersion}-web-selfhosted.zip"
+        logger.lifecycle("Downloading the pinned Ruffle ${ruffleVersion} web runtime.")
+        new URL(downloadUrl).withInputStream { input ->
+            ruffleArchive.withOutputStream { output -> output << input }
+        }
+
+        def digest = MessageDigest.getInstance("SHA-256")
+        ruffleArchive.withInputStream { input ->
+            byte[] buffer = new byte[65536]
+            int count
+            while ((count = input.read(buffer)) > 0) {
+                digest.update(buffer, 0, count)
+            }
+        }
+        def actualSha256 = digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+        if (actualSha256 != ruffleSha256) {
+            ruffleArchive.delete()
+            throw new GradleException("Ruffle archive checksum mismatch; expected ${ruffleSha256}, got ${actualSha256}.")
+        }
+
+        def copiedWasm = 0
+        def copiedMainScript = false
+        new ZipFile(ruffleArchive).withCloseable { zip ->
+            zip.entries().each { entry ->
+                if (entry.directory) return
+                def name = entry.name.tokenize("/").last()
+                def isRuntimeFile = name == "ruffle.js" ||
+                        name.endsWith(".wasm") ||
+                        (name.endsWith(".js") && !name.endsWith(".js.map")) ||
+                        name.startsWith("LICENSE_")
+                if (!isRuntimeFile) return
+                def destination = new File(ruffleAssets, name)
+                zip.getInputStream(entry).withCloseable { input ->
+                    destination.withOutputStream { output -> output << input }
+                }
+                if (name.endsWith(".wasm")) copiedWasm++
+                if (name == "ruffle.js") copiedMainScript = true
+            }
+        }
+        if (!copiedMainScript || copiedWasm == 0) {
+            throw new GradleException("The Ruffle archive did not contain the expected JavaScript and WebAssembly runtime files.")
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("fetchRufflePlayer")
+}

@@ -49,20 +49,20 @@ public final class SettingsStore {
 
     public static int defaultX(String name) {
         switch (name) {
-            case "up": return 82;
-            case "down": return 82;
-            case "left": return 70;
-            case "right": return 94;
+            case "up": return 14;
+            case "down": return 14;
+            case "left": return 5;
+            case "right": return 23;
             default: return 50;
         }
     }
 
     public static int defaultY(String name) {
         switch (name) {
-            case "up": return 68;
-            case "down": return 91;
-            case "left": return 80;
-            case "right": return 80;
+            case "up": return 73;
+            case "down": return 93;
+            case "left": return 83;
+            case "right": return 83;
             default: return 50;
         }
     }

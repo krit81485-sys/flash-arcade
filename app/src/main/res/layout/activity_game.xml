@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/game_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#080A0D">
+
+    <WebView
+        android:id="@+id/game_web_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#080A0D"
+        android:focusable="true"
+        android:focusableInTouchMode="true" />
+
+    <com.flasharcade.launcher.ui.TouchPassthroughFrameLayout
+        android:id="@+id/controls_layer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:clickable="false"
+        android:focusable="false">
+
+        <TextView
+            android:id="@+id/exit_button"
+            android:layout_width="52dp"
+            android:layout_height="38dp"
+            android:layout_gravity="top|start"
+            android:layout_marginStart="10dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/game_control_button"
+            android:gravity="center"
+            android:text="EXIT"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/control_up"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="112dp"
+            android:layout_marginBottom="122dp"
+            android:background="@drawable/game_control_button"
+            android:contentDescription="Up directional key"
+            android:gravity="center"
+            android:text="↑"
+            android:textColor="#FFFFFF"
+            android:textSize="21sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/control_down"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="112dp"
+            android:layout_marginBottom="32dp"
+            android:background="@drawable/game_control_button"
+            android:contentDescription="Down directional key"
+            android:gravity="center"
+            android:text="↓"
+            android:textColor="#FFFFFF"
+            android:textSize="21sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/control_left"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="40dp"
+            android:layout_marginBottom="77dp"
+            android:background="@drawable/game_control_button"
+            android:contentDescription="Left directional key"
+            android:gravity="center"
+            android:text="←"
+            android:textColor="#FFFFFF"
+            android:textSize="21sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/control_right"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="184dp"
+            android:layout_marginBottom="77dp"
+            android:background="@drawable/game_control_button"
+            android:contentDescription="Right directional key"
+            android:gravity="center"
+            android:text="→"
+            android:textColor="#FFFFFF"
+            android:textSize="21sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/action_button"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="18dp"
+            android:layout_marginBottom="22dp"
+            android:background="@drawable/game_control_button"
+            android:contentDescription="Action (Spacebar)"
+            android:gravity="center"
+            android:text="A"
+            android:textColor="#FFFFFF"
+            android:textSize="21sp"
+            android:textStyle="bold" />
+    </com.flasharcade.launcher.ui.TouchPassthroughFrameLayout>
+
+    <TextView
+        android:id="@+id/player_status"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC080A0D"
+        android:clickable="false"
+        android:gravity="center"
+        android:padding="24dp"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+</FrameLayout>

@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -28,6 +29,7 @@ import android.widget.Toast;
 
 import androidx.webkit.WebViewAssetLoader;
 
+import com.flasharcade.launcher.R;
 import com.flasharcade.launcher.data.GameDao;
 import com.flasharcade.launcher.data.GameDatabase;
 import com.flasharcade.launcher.data.GameEntity;
@@ -51,13 +53,20 @@ public class PlayerActivity extends Activity {
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT
     };
+    private static final int[] CONTROL_VIEW_IDS = {
+            R.id.control_up,
+            R.id.control_down,
+            R.id.control_left,
+            R.id.control_right
+    };
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private FrameLayout root;
-    private FrameLayout controlsLayer;
+    private TouchPassthroughFrameLayout controlsLayer;
     private WebView webView;
     private TextView status;
     private TextView[] controlViews;
+    private TextView actionButton;
     private SettingsStore settings;
     private boolean rendererGone;
 
@@ -67,16 +76,18 @@ public class PlayerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setImmersiveMode();
         settings = new SettingsStore(this);
-        root = new FrameLayout(this);
-        root.setBackgroundColor(Color.BLACK);
-        setContentView(root);
-        status = new TextView(this);
+        setContentView(R.layout.activity_game);
+        root = findViewById(R.id.game_root);
+        webView = findViewById(R.id.game_web_view);
+        controlsLayer = findViewById(R.id.controls_layer);
+        status = findViewById(R.id.player_status);
         status.setText("Opening game…");
+        status.setVisibility(View.VISIBLE);
         status.setTextColor(Color.WHITE);
         status.setTextSize(14);
         status.setGravity(Gravity.CENTER);
-        root.addView(status, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        status.setClickable(false);
+        controlsLayer.setForwardingTarget(webView);
         long gameId = getIntent().getLongExtra(EXTRA_GAME_ID, -1);
         if (gameId < 0) {
             showFatalMessage("No game was selected.");
@@ -113,7 +124,6 @@ public class PlayerActivity extends Activity {
         }
         if (status.getParent() != null) root.removeView(status);
 
-        webView = new WebView(this);
         webView.setBackgroundColor(Color.BLACK);
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
@@ -128,6 +138,7 @@ public class PlayerActivity extends Activity {
         WebSettings webSettings = webView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
+        webSettings.setDatabaseEnabled(true);
         webSettings.setAllowFileAccess(false);
         webSettings.setAllowContentAccess(false);
         webSettings.setAllowFileAccessFromFileURLs(false);
@@ -167,14 +178,17 @@ public class PlayerActivity extends Activity {
             @Override
             public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 rendererGone = true;
+                controlsLayer.setForwardingTarget(null);
+                if (view.getParent() instanceof ViewGroup) {
+                    ((ViewGroup) view.getParent()).removeView(view);
+                }
                 view.destroy();
                 webView = null;
                 showFatalMessage("The game renderer stopped unexpectedly. The launcher is still open; go back and try another game.");
                 return true;
             }
         });
-        root.addView(webView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        controlsLayer.setForwardingTarget(webView);
         addControls();
         webView.loadUrl(createRunnerUrl(game.localFileName, game.title));
         webView.requestFocus();
@@ -197,53 +211,57 @@ public class PlayerActivity extends Activity {
     }
 
     private void addControls() {
-        controlsLayer = new FrameLayout(this);
-        controlsLayer.setClipChildren(false);
-        controlsLayer.setClipToPadding(false);
-        controlsLayer.setClickable(false);
-        root.addView(controlsLayer, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        TextView exit = makeOverlay("EXIT");
+        TextView exit = findViewById(R.id.exit_button);
+        styleOverlay(exit);
+        exit.setText("EXIT");
         exit.setTextSize(10);
         exit.setContentDescription("Exit game");
-        FrameLayout.LayoutParams exitParams = new FrameLayout.LayoutParams(dp(52), dp(38));
-        exitParams.gravity = Gravity.TOP | Gravity.START;
-        exitParams.setMargins(dp(10), dp(10), 0, 0);
-        controlsLayer.addView(exit, exitParams);
         exit.setOnClickListener(v -> finish());
 
         controlViews = new TextView[SettingsStore.CONTROL_NAMES.length];
         for (int i = 0; i < SettingsStore.CONTROL_NAMES.length; i++) {
             final int index = i;
-            TextView button = makeOverlay(CONTROL_LABELS[i]);
+            TextView button = findViewById(CONTROL_VIEW_IDS[i]);
+            styleOverlay(button);
+            button.setText(CONTROL_LABELS[i]);
             button.setContentDescription(SettingsStore.CONTROL_NAMES[i] + " directional key");
             button.setVisibility(settings.controlsVisible() ? View.VISIBLE : View.GONE);
-            button.setOnTouchListener((view, event) -> {
-                switch (event.getActionMasked()) {
-                    case android.view.MotionEvent.ACTION_DOWN:
-                        view.setAlpha(0.9f);
-                        dispatchGameKey(CONTROL_KEYS[index], KeyEvent.ACTION_DOWN);
-                        return true;
-                    case android.view.MotionEvent.ACTION_UP:
-                    case android.view.MotionEvent.ACTION_CANCEL:
-                        view.setAlpha(settings.controlsVisible() ? 0.68f : 0f);
-                        dispatchGameKey(CONTROL_KEYS[index], KeyEvent.ACTION_UP);
-                        return true;
-                    default:
-                        return true;
-                }
-            });
-            controlsLayer.addView(button);
+            bindKeyButton(button, CONTROL_KEYS[index]);
             controlViews[i] = button;
         }
+
+        actionButton = findViewById(R.id.action_button);
+        styleOverlay(actionButton);
+        actionButton.setText("A");
+        actionButton.setContentDescription("Action (Spacebar)");
+        actionButton.setVisibility(settings.controlsVisible() ? View.VISIBLE : View.GONE);
+        bindKeyButton(actionButton, KeyEvent.KEYCODE_SPACE);
+
         controlsLayer.addOnLayoutChangeListener((view, left, top, right, bottom,
                                                  oldLeft, oldTop, oldRight, oldBottom) -> positionControls());
         controlsLayer.post(this::positionControls);
     }
 
+    private void bindKeyButton(TextView button, int keyCode) {
+        button.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    view.setAlpha(0.9f);
+                    dispatchGameKey(keyCode, KeyEvent.ACTION_DOWN);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    view.setAlpha(settings.controlsVisible() ? 0.68f : 0f);
+                    dispatchGameKey(keyCode, KeyEvent.ACTION_UP);
+                    return true;
+                default:
+                    return true;
+            }
+        });
+    }
+
     private void positionControls() {
-        if (controlsLayer == null || controlViews == null) return;
+        if (controlsLayer == null || controlViews == null || actionButton == null) return;
         int width = controlsLayer.getWidth();
         int height = controlsLayer.getHeight();
         if (width <= 0 || height <= 0) return;
@@ -259,11 +277,17 @@ public class PlayerActivity extends Activity {
             params.topMargin = centerY - size / 2;
             controlViews[i].setLayoutParams(params);
         }
+
+        int actionSize = (int) Math.max(1d, Math.min(Integer.MAX_VALUE,
+                Math.round(64f * settings.overlayScale() * density)));
+        FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(actionSize, actionSize);
+        actionParams.gravity = Gravity.BOTTOM | Gravity.RIGHT;
+        actionParams.rightMargin = dp(18);
+        actionParams.bottomMargin = dp(22);
+        actionButton.setLayoutParams(actionParams);
     }
 
-    private TextView makeOverlay(String label) {
-        TextView view = new TextView(this);
-        view.setText(label);
+    private void styleOverlay(TextView view) {
         view.setTextColor(Color.WHITE);
         view.setTextSize(21);
         view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -272,7 +296,6 @@ public class PlayerActivity extends Activity {
         view.setAlpha(0.68f);
         view.setClickable(true);
         view.setFocusable(false);
-        return view;
     }
 
     private android.graphics.drawable.GradientDrawable roundOverlay() {
@@ -394,10 +417,16 @@ public class PlayerActivity extends Activity {
                 controlViews[i].setVisibility(settings.controlsVisible() ? View.VISIBLE : View.GONE);
             }
         }
+        if (actionButton != null) {
+            actionButton.setVisibility(settings.controlsVisible() ? View.VISIBLE : View.GONE);
+        }
     }
 
     @Override
     protected void onDestroy() {
+        if (controlsLayer != null) {
+            controlsLayer.setForwardingTarget(null);
+        }
         if (webView != null) {
             webView.stopLoading();
             webView.loadUrl("about:blank");

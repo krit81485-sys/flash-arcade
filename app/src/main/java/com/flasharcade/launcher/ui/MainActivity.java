@@ -266,8 +266,8 @@ public class MainActivity extends ComponentActivity implements GameAdapter.Liste
 
     @Override
     public void onLaunch(GameEntity game) {
-        Intent intent = new Intent(this, PlayerActivity.class);
-        intent.putExtra(PlayerActivity.EXTRA_GAME_ID, game.id);
+        Intent intent = new Intent(this, GameActivity.class);
+        intent.putExtra(GameActivity.EXTRA_GAME_ID, game.id);
         startActivity(intent);
     }
 

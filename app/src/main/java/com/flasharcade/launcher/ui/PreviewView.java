@@ -94,6 +94,23 @@ public class PreviewView extends View {
             canvas.drawText(labels[i], x, baseline, paint);
             canvas.restoreToCount(buttonSave);
         }
+
+        float actionRadius = safeDimension(dp(64f * settings.overlayScale())) / 2f;
+        float actionX = width - dp(18) - actionRadius;
+        float actionY = height - dp(22) - actionRadius;
+        paint.setColor(0xBB26333F);
+        canvas.drawCircle(actionX, actionY, actionRadius, paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(dp(1.2f));
+        paint.setColor(0xFF79E2A8);
+        canvas.drawCircle(actionX, actionY, actionRadius, paint);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0xFFFFFFFF);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTypeface(Typeface.DEFAULT_BOLD);
+        paint.setTextSize(Math.min(actionRadius, dp(18)));
+        float actionBaseline = actionY - (paint.ascent() + paint.descent()) / 2f;
+        canvas.drawText("A", actionX, actionBaseline, paint);
     }
 
     private float safeDimension(float value) {

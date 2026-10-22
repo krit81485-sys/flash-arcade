@@ -13,6 +13,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -26,6 +27,7 @@ import androidx.documentfile.provider.DocumentFile;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.flasharcade.launcher.R;
 import com.flasharcade.launcher.data.GameDao;
 import com.flasharcade.launcher.data.GameDatabase;
 import com.flasharcade.launcher.data.GameEntity;
@@ -296,25 +298,29 @@ public class MainActivity extends ComponentActivity implements GameAdapter.Liste
     }
 
     private void confirmPermissionTest(GameEntity game) {
-        boolean[] selected = {false, false};
-        String[] permissions = {
-                "Allow external network access (HTTPS)",
-                "Allow Flash-to-JavaScript access (ExternalInterface)"
-        };
-        new android.app.AlertDialog.Builder(this)
+        View content = getLayoutInflater().inflate(
+                R.layout.dialog_permission_test, null, false);
+        CheckBox networkingCheckbox = content.findViewById(R.id.permission_allow_networking);
+        CheckBox scriptAccessCheckbox = content.findViewById(R.id.permission_allow_script_access);
+
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
                 .setTitle("Test extra access for this game?")
-                .setMessage("Only use these permissions with a SWF you trust. Network access lets it contact external hosts. Script access lets it call JavaScript on the player page. These choices apply to this launch only.")
-                .setMultiChoiceItems(permissions, selected,
-                        (dialog, which, isChecked) -> selected[which] = isChecked)
+                .setView(content)
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Launch test", (dialog, which) -> {
-                    if (!selected[0] && !selected[1]) {
+                .setPositiveButton("Launch test", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(
+                android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                    boolean allowNetworking = networkingCheckbox.isChecked();
+                    boolean allowScriptAccess = scriptAccessCheckbox.isChecked();
+                    if (!allowNetworking && !allowScriptAccess) {
                         showMessage("Choose at least one permission for the test.");
                         return;
                     }
-                    launchGame(game, selected[0], selected[1]);
-                })
-                .show();
+                    dialog.dismiss();
+                    launchGame(game, allowNetworking, allowScriptAccess);
+                }));
+        dialog.show();
     }
 
     private void launchGame(GameEntity game, boolean allowNetworking, boolean allowScriptAccess) {

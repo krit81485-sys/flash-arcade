@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="8dp"
+        android:text="Only use these permissions with a SWF you trust. Network access lets it contact external hosts. Script access lets it call JavaScript on the player page. These choices apply to this launch only."
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="14sp" />
+
+    <CheckBox
+        android:id="@+id/permission_allow_networking"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:buttonTint="?android:attr/colorAccent"
+        android:gravity="center_vertical"
+        android:minHeight="48dp"
+        android:text="Allow network access"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textSize="14sp" />
+
+    <CheckBox
+        android:id="@+id/permission_allow_script_access"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:buttonTint="?android:attr/colorAccent"
+        android:gravity="center_vertical"
+        android:minHeight="48dp"
+        android:text="Allow script access"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textSize="14sp" />
+
+</LinearLayout>

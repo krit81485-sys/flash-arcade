@@ -79,6 +79,8 @@
         ? params.get("quality") : "high";
       const scale = ["showAll", "noBorder", "exactFit", "noScale"].includes(params.get("scale"))
         ? params.get("scale") : "showAll";
+      const networking = params.get("networking") === "all" ? "all" : "internal";
+      const allowScriptAccess = params.get("scriptAccess") === "true";
       const parsedScale = Number.parseFloat(params.get("gameScale") || "1");
       const parsedMargin = Number.parseInt(params.get("safeMargin") || "0", 10);
       const gameScale = Number.isFinite(parsedScale) && parsedScale > 0 ? parsedScale : 1;
@@ -103,14 +105,30 @@
         allowNetworking: "internal",
         contextMenu: false
       };
+      if (networking === "all") {
+        console.warn("Ruffle external networking is enabled for this game launch.");
+      }
+      if (allowScriptAccess) {
+        console.warn("Ruffle ExternalInterface script access is enabled for this game launch.");
+      }
 
       window.addEventListener("error", event => {
-        if (!event.message) return;
-        const box = document.getElementById("failure");
-        if (box) {
-          box.textContent = "The Flash player reported a problem. Some SWF features may not be supported.";
-          box.style.display = "block";
+        const target = event.target;
+        if (target && target !== window) {
+          const resource = target.src || target.href;
+          if (resource) reportDiagnostic("Resource load", "Failed to load " + resource);
+          return;
         }
+        if (!event.message) return;
+        reportDiagnostic("JavaScript error",
+          event.message + (event.filename ? " (" + event.filename + ":" + event.lineno + ")" : ""));
+        showFailure("The Flash player reported a problem. Some SWF features may not be supported.");
+      }, true);
+
+      window.addEventListener("unhandledrejection", event => {
+        const reason = event.reason && event.reason.message
+          ? event.reason.message : String(event.reason || "Unknown promise rejection");
+        reportDiagnostic("Unhandled promise", reason);
       });
 
       window.addEventListener("DOMContentLoaded", async () => {
@@ -125,15 +143,34 @@
           player.tabIndex = 0;
           document.getElementById("player-host").appendChild(player);
           player.focus();
-          await player.ruffle().load({ url: swf, quality, scale });
+          await player.ruffle().load({
+            url: swf,
+            quality,
+            scale,
+            allowNetworking: networking,
+            allowScriptAccess
+          });
           player.focus();
         } catch (error) {
-          showFailure("Ruffle could not start this game. It may use Flash features that are not supported.");
+          const detail = error && error.message ? error.message : String(error);
+          showFailure("Ruffle could not start this game. It may use Flash features that are not supported.",
+            detail);
           console.error(error);
         }
       });
 
-      function showFailure(message) {
+      function reportDiagnostic(source, message) {
+        try {
+          if (window.FlashDiagnostics) {
+            window.FlashDiagnostics.report(source, String(message || "Unknown error"));
+          }
+        } catch (_) {
+          // Diagnostics must never prevent the game from loading.
+        }
+      }
+
+      function showFailure(message, detail) {
+        reportDiagnostic("Load failure", detail ? message + " " + detail : message);
         const box = document.getElementById("failure");
         if (box) {
           box.textContent = message;

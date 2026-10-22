@@ -1,6 +1,9 @@
 package com.flasharcade.launcher.ui;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -18,6 +21,7 @@ import android.view.WindowManager;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.ConsoleMessage;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -26,6 +30,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.MimeTypeMap;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -41,13 +47,31 @@ import com.flasharcade.launcher.util.SettingsStore;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class PlayerActivity extends Activity {
     public static final String EXTRA_GAME_ID = "game_id";
+    public static final String EXTRA_ALLOW_NETWORKING = "allow_networking";
+    public static final String EXTRA_ALLOW_SCRIPT_ACCESS = "allow_script_access";
     private static final String ASSET_HOST = "appassets.androidplatform.net";
+    private static final int MAX_DIAGNOSTIC_ENTRIES = 80;
+    private static final int MAX_DIAGNOSTIC_ENTRY_LENGTH = 600;
+    private static final Pattern URL_PATTERN =
+            Pattern.compile("(?i)https?://[^\\s\\\"'<>]+");
+    private static final Pattern CREDENTIAL_PATTERN = Pattern.compile(
+            "(?i)(authorization|cookie|set-cookie|access[_-]?token|refresh[_-]?token|token|password|secret|client[_-]?secret|api[_-]?key)(\\s*[:=]\\s*)([^\\s&;,]+)");
+    private static final Pattern COOKIE_HEADER_PATTERN =
+            Pattern.compile("(?i)(cookie|set-cookie)(\\s*[:=]\\s*)[^\\r\\n]*");
+    private static final Pattern DEVICE_PATH_PATTERN = Pattern.compile(
+            "(?i)(/data/(?:user(?:_de)?|data|app)/[^\\s\\\"'<>]+|/storage/emulated/\\d+/[^\\s\\\"'<>]+|/sdcard/[^\\s\\\"'<>]+)");
+    private static final Pattern AUTH_SCHEME_PATTERN =
+            Pattern.compile("(?i)\\b(Bearer|Basic)\\s+[A-Za-z0-9._~+/-]+=*");
     private static final String[] CONTROL_LABELS = {"↑", "↓", "←", "→"};
     private static final int[] CONTROL_KEYS = {
             KeyEvent.KEYCODE_DPAD_UP,
@@ -63,20 +87,30 @@ public class PlayerActivity extends Activity {
     };
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Object diagnosticLock = new Object();
+    private final List<String> diagnosticEntries = new ArrayList<>();
     private FrameLayout root;
     private TouchPassthroughFrameLayout controlsLayer;
     private WebView webView;
     private TextView status;
+    private TextView diagnosticsButton;
+    private TextView diagnosticsText;
+    private LinearLayout diagnosticsPanel;
+    private ScrollView diagnosticsScroll;
     private TextView[] controlViews;
     private TextView actionButton;
     private SettingsStore settings;
     private boolean rendererGone;
     private boolean userTouchedGame;
     private boolean startupTapAttempted;
+    private boolean allowExternalNetworking;
+    private boolean allowScriptAccess;
+    private long diagnosticsStartedAt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        diagnosticsStartedAt = SystemClock.elapsedRealtime();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setImmersiveMode();
         settings = new SettingsStore(this);
@@ -85,6 +119,7 @@ public class PlayerActivity extends Activity {
         webView = findViewById(R.id.game_web_view);
         controlsLayer = findViewById(R.id.controls_layer);
         status = findViewById(R.id.player_status);
+        setupDiagnostics();
         status.setText("Opening game…");
         status.setVisibility(View.VISIBLE);
         status.setTextColor(Color.WHITE);
@@ -126,6 +161,8 @@ public class PlayerActivity extends Activity {
             showFatalMessage("The imported SWF is missing. Remove it from the library and import it again.");
             return;
         }
+        allowExternalNetworking = getIntent().getBooleanExtra(EXTRA_ALLOW_NETWORKING, false);
+        allowScriptAccess = getIntent().getBooleanExtra(EXTRA_ALLOW_SCRIPT_ACCESS, false);
         if (status.getParent() != null) root.removeView(status);
 
         webView.setBackgroundColor(Color.BLACK);
@@ -156,6 +193,7 @@ public class PlayerActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             webSettings.setSafeBrowsingEnabled(true);
         }
+        webView.addJavascriptInterface(new PlayerDiagnosticsBridge(), "FlashDiagnostics");
 
         webView.setOnTouchListener((view, event) -> {
             if (!startupTapAttempted && event.getActionMasked() == MotionEvent.ACTION_DOWN) {
@@ -166,23 +204,37 @@ public class PlayerActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage message) {
-                int priority = message.messageLevel() == ConsoleMessage.MessageLevel.ERROR
-                        ? Log.ERROR : Log.DEBUG;
-                Log.println(priority, "FlashArcade/Ruffle",
-                        message.message() + " (" + message.sourceId() + ":" + message.lineNumber() + ")");
+                boolean isError = message.messageLevel() == ConsoleMessage.MessageLevel.ERROR;
+                boolean isWarning = message.messageLevel() == ConsoleMessage.MessageLevel.WARNING;
+                int priority = isError ? Log.ERROR : isWarning ? Log.WARN : Log.DEBUG;
+                String detail = message.message() + " (" + message.sourceId()
+                        + ":" + message.lineNumber() + ")";
+                Log.println(priority, "FlashArcade/Ruffle", sanitizeDiagnosticText(detail));
+                if (isError || isWarning) {
+                    recordDiagnostic("Ruffle console", detail, false);
+                }
                 return true;
             }
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                return assetLoader.shouldInterceptRequest(request.getUrl());
+                Uri uri = request.getUrl();
+                WebResourceResponse response = assetLoader.shouldInterceptRequest(uri);
+                if (response == null && isLocalPlayerResource(uri)) {
+                    recordDiagnostic("Resource load",
+                            "Could not load " + safeResourceLabel(uri) + " (local resource unavailable).",
+                            false);
+                }
+                return response;
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                return !("https".equalsIgnoreCase(uri.getScheme()) && ASSET_HOST.equalsIgnoreCase(uri.getHost()));
+                boolean isHttps = "https".equalsIgnoreCase(uri.getScheme());
+                boolean isLocalPlayer = isHttps && ASSET_HOST.equalsIgnoreCase(uri.getHost());
+                return !isLocalPlayer && !(allowExternalNetworking && isHttps);
             }
 
             @Override
@@ -194,8 +246,25 @@ public class PlayerActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (isRelevantRequest(request)) {
+                    CharSequence errorDescription = error == null ? null : error.getDescription();
+                    String description = errorDescription == null ? "Unknown WebView resource error"
+                            : errorDescription.toString();
+                    String detail = safeResourceLabel(request.getUrl()) + " — " + description;
+                    recordDiagnostic("WebView load", detail, request.isForMainFrame());
+                }
                 if (request.isForMainFrame()) {
                     showRecoverableMessage("Ruffle could not load this SWF. Check the imported file and try again.");
+                }
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request,
+                                            WebResourceResponse response) {
+                if (isRelevantRequest(request)) {
+                    String detail = safeResourceLabel(request.getUrl()) + " returned HTTP "
+                            + response.getStatusCode() + ".";
+                    recordDiagnostic("HTTP resource error", detail, request.isForMainFrame());
                 }
             }
 
@@ -209,13 +278,242 @@ public class PlayerActivity extends Activity {
                 view.destroy();
                 webView = null;
                 showFatalMessage("The game renderer stopped unexpectedly. The launcher is still open; go back and try another game.");
+                recordDiagnostic("WebView renderer",
+                        detail.didCrash() ? "The game renderer crashed."
+                                : "The game renderer was terminated.",
+                        true);
                 return true;
             }
         });
         controlsLayer.setForwardingTarget(webView);
         addControls();
-        webView.loadUrl(createRunnerUrl(game.localFileName, game.title));
+        if (allowExternalNetworking || allowScriptAccess) {
+            Log.w("FlashArcade/Ruffle",
+                    "Relaxed Ruffle access is enabled for this game launch: networking="
+                            + allowExternalNetworking + ", scriptAccess=" + allowScriptAccess);
+        }
+        webView.loadUrl(createRunnerUrl(
+                game.localFileName, game.title, allowExternalNetworking, allowScriptAccess));
         webView.requestFocus();
+    }
+
+    private void setupDiagnostics() {
+        diagnosticsButton = findViewById(R.id.diagnostics_button);
+        diagnosticsPanel = findViewById(R.id.player_diagnostics_panel);
+        diagnosticsText = findViewById(R.id.diagnostics_text);
+        diagnosticsScroll = findViewById(R.id.diagnostics_scroll);
+        diagnosticsButton.setVisibility(View.VISIBLE);
+        diagnosticsButton.setOnClickListener(view -> showDiagnosticsPanel());
+        findViewById(R.id.diagnostics_close).setOnClickListener(view -> hideDiagnosticsPanel());
+        findViewById(R.id.diagnostics_copy).setOnClickListener(view -> copyDiagnostics());
+        findViewById(R.id.diagnostics_share).setOnClickListener(view -> shareDiagnostics());
+    }
+
+    private void showDiagnosticsPanel() {
+        if (root == null || diagnosticsPanel == null) return;
+        if (root.getWidth() <= 0 || root.getHeight() <= 0) {
+            root.post(this::showDiagnosticsPanel);
+            return;
+        }
+
+        int width = Math.max(dp(1), root.getWidth() - dp(24));
+        int availableHeight = Math.max(dp(1), root.getHeight() - dp(24));
+        int height = Math.min(availableHeight, Math.round(root.getHeight() * 0.78f));
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                width, height, Gravity.CENTER);
+        diagnosticsPanel.setLayoutParams(params);
+        diagnosticsPanel.setVisibility(View.VISIBLE);
+        diagnosticsPanel.bringToFront();
+        diagnosticsText.setText(buildDiagnosticReport());
+        diagnosticsScroll.post(() -> diagnosticsScroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private void hideDiagnosticsPanel() {
+        if (diagnosticsPanel != null) diagnosticsPanel.setVisibility(View.GONE);
+        if (webView != null && !rendererGone) webView.requestFocus();
+    }
+
+    private void copyDiagnostics() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            Toast.makeText(this, "Could not access the clipboard.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText(
+                "Flash player diagnostics", buildDiagnosticReport()));
+        Toast.makeText(this, "Diagnostics copied.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void shareDiagnostics() {
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_TEXT, buildDiagnosticReport());
+        try {
+            startActivity(Intent.createChooser(share, "Share player diagnostics"));
+        } catch (RuntimeException error) {
+            Toast.makeText(this, "No app is available to share the report.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void recordDiagnostic(String source, String message, boolean openPanel) {
+        if (root == null || isFinishing() || isDestroyed()) return;
+        String safeSource = sanitizeDiagnosticText(source);
+        String safeMessage = sanitizeDiagnosticText(message);
+        if (safeSource.isEmpty()) safeSource = "Player";
+        if (safeSource.length() > 48) safeSource = safeSource.substring(0, 48);
+        if (safeMessage.isEmpty()) safeMessage = "No details provided.";
+        final String entry = String.format(Locale.US, "[+%.1fs] %s: %s",
+                (SystemClock.elapsedRealtime() - diagnosticsStartedAt) / 1000f,
+                safeSource, safeMessage);
+        final boolean showPanel = openPanel || "load failure".equalsIgnoreCase(safeSource);
+
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed() || diagnosticsText == null) return;
+            boolean firstEntry;
+            synchronized (diagnosticLock) {
+                firstEntry = diagnosticEntries.isEmpty();
+                if (diagnosticEntries.size() >= MAX_DIAGNOSTIC_ENTRIES) {
+                    diagnosticEntries.remove(0);
+                }
+                diagnosticEntries.add(entry);
+            }
+            diagnosticsText.setText(buildDiagnosticReport());
+            diagnosticsButton.setVisibility(View.VISIBLE);
+            diagnosticsScroll.post(() -> diagnosticsScroll.fullScroll(View.FOCUS_DOWN));
+            if (showPanel) {
+                showDiagnosticsPanel();
+            } else if (firstEntry) {
+                Toast.makeText(this, "Player issue captured. Tap ISSUES to view the report.",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private String buildDiagnosticReport() {
+        StringBuilder report = new StringBuilder("Flash Arcade player diagnostics\n");
+        List<String> entries;
+        synchronized (diagnosticLock) {
+            entries = new ArrayList<>(diagnosticEntries);
+        }
+        report.append("Captured entries: ").append(entries.size()).append("\n\n");
+        report.append("Ruffle networking: ")
+                .append(allowExternalNetworking ? "all (opt-in)" : "internal")
+                .append('\n');
+        report.append("Flash ExternalInterface: ")
+                .append(allowScriptAccess ? "enabled (opt-in)" : "disabled")
+                .append("\n\n");
+        if (entries.isEmpty()) {
+            report.append("No player errors captured.");
+        } else {
+            for (String entry : entries) report.append(entry).append('\n');
+        }
+        return report.toString();
+    }
+
+    private boolean isRelevantRequest(WebResourceRequest request) {
+        if (request.isForMainFrame()) return true;
+        String scheme = request.getUrl().getScheme();
+        return "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+    }
+
+    private static boolean isLocalPlayerResource(Uri uri) {
+        if (uri == null || !ASSET_HOST.equalsIgnoreCase(uri.getHost())) return false;
+        String path = uri.getPath();
+        return path != null && (path.startsWith("/assets/") || path.startsWith("/games/"));
+    }
+
+    private static String safeResourceLabel(Uri uri) {
+        if (uri == null) return "[unknown resource]";
+        String scheme = uri.getScheme();
+        String host = uri.getHost();
+        String path = uri.getEncodedPath();
+        if (ASSET_HOST.equalsIgnoreCase(host) && path != null
+                && path.startsWith("/games/")) {
+            path = "/games/[imported-swf].swf";
+        } else if (path != null) {
+            path = redactSensitivePath(path);
+        }
+        if (scheme == null || host == null
+                || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+            return path == null || path.isEmpty() ? "[unknown resource]" : path;
+        }
+        return scheme.toLowerCase(Locale.ROOT) + "://" + host.toLowerCase(Locale.ROOT)
+                + (path == null || path.isEmpty() ? "/" : path);
+    }
+
+    private static String redactSensitivePath(String path) {
+        String[] segments = path.split("/", -1);
+        StringBuilder safePath = new StringBuilder();
+        boolean redactNext = false;
+        for (String segment : segments) {
+            if (segment.isEmpty()) continue;
+            safePath.append('/');
+            if (redactNext) {
+                safePath.append("[redacted]");
+                redactNext = false;
+                continue;
+            }
+            String lower = segment.toLowerCase(Locale.ROOT);
+            if ("token".equals(lower) || "auth".equals(lower) || "authorization".equals(lower)
+                    || "session".equals(lower) || "signature".equals(lower)
+                    || "password".equals(lower) || "secret".equals(lower) || "key".equals(lower)) {
+                safePath.append(segment);
+                redactNext = true;
+            } else if (segment.matches("(?i)[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+                    || segment.length() > 24) {
+                safePath.append("[id]");
+            } else {
+                safePath.append(segment);
+            }
+        }
+        if (safePath.length() > 1 && path.endsWith("/")) safePath.append('/');
+        return safePath.length() == 0 ? "/" : safePath.toString();
+    }
+
+    private static String sanitizeDiagnosticText(String value) {
+        if (value == null) return "";
+        Matcher urlMatcher = URL_PATTERN.matcher(value);
+        StringBuffer urlSafe = new StringBuffer();
+        while (urlMatcher.find()) {
+            String candidate = urlMatcher.group();
+            int end = candidate.length();
+            while (end > 0 && ".,;:!?)]}".indexOf(candidate.charAt(end - 1)) >= 0) end--;
+            String url = candidate.substring(0, end);
+            String suffix = candidate.substring(end);
+            String safeUrl = safeResourceLabel(Uri.parse(url));
+            urlMatcher.appendReplacement(urlSafe,
+                    Matcher.quoteReplacement(safeUrl + suffix));
+        }
+        urlMatcher.appendTail(urlSafe);
+
+        String safe = AUTH_SCHEME_PATTERN.matcher(urlSafe.toString())
+                .replaceAll("$1 [redacted]");
+        safe = COOKIE_HEADER_PATTERN.matcher(safe).replaceAll("$1$2[redacted]");
+        safe = CREDENTIAL_PATTERN.matcher(safe).replaceAll("$1$2[redacted]");
+        safe = DEVICE_PATH_PATTERN.matcher(safe).replaceAll("[device path]");
+        StringBuilder printable = new StringBuilder(Math.min(safe.length(), MAX_DIAGNOSTIC_ENTRY_LENGTH));
+        boolean previousSpace = false;
+        for (int i = 0; i < safe.length(); i++) {
+            char character = safe.charAt(i);
+            if (Character.isISOControl(character) || Character.isWhitespace(character)) {
+                if (!previousSpace) printable.append(' ');
+                previousSpace = true;
+            } else {
+                printable.append(character);
+                previousSpace = false;
+            }
+            if (printable.length() >= MAX_DIAGNOSTIC_ENTRY_LENGTH) break;
+        }
+        return printable.toString().trim();
+    }
+
+    public final class PlayerDiagnosticsBridge {
+        @JavascriptInterface
+        public void report(String source, String message) {
+            String safeSource = sanitizeDiagnosticText(source);
+            boolean shouldOpenPanel = "load failure".equalsIgnoreCase(safeSource);
+            recordDiagnostic(safeSource, message, shouldOpenPanel);
+        }
     }
 
     private void dispatchInitialCanvasTap(WebView target) {
@@ -252,7 +550,8 @@ public class PlayerActivity extends Activity {
         }, 90L);
     }
 
-    private String createRunnerUrl(String localFileName, String title) {
+    private String createRunnerUrl(String localFileName, String title,
+                                   boolean allowNetworking, boolean allowScriptAccess) {
         Uri uri = new Uri.Builder()
                 .scheme("https")
                 .authority(ASSET_HOST)
@@ -260,6 +559,8 @@ public class PlayerActivity extends Activity {
                 .appendPath("runner.html")
                 .appendQueryParameter("swf", "/games/" + localFileName)
                 .appendQueryParameter("title", title)
+                .appendQueryParameter("networking", allowNetworking ? "all" : "internal")
+                .appendQueryParameter("scriptAccess", Boolean.toString(allowScriptAccess))
                 .appendQueryParameter("quality", settings.quality())
                 .appendQueryParameter("scale", settings.scaleMode())
                 .appendQueryParameter("gameScale", Float.toString(settings.gameScale()))
@@ -489,6 +790,7 @@ public class PlayerActivity extends Activity {
         if (webView != null) {
             webView.stopLoading();
             webView.loadUrl("about:blank");
+            webView.removeJavascriptInterface("FlashDiagnostics");
             webView.setWebChromeClient(null);
             webView.setWebViewClient(null);
             webView.destroy();

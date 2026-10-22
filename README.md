@@ -31,14 +31,16 @@ Install the APK from `app/build/outputs/apk/debug/app-debug.apk`.
 - Imported SWFs are copied into the app-private `games/` directory. This avoids broken document-provider paths and makes the library work offline.
 - Covers are generated automatically and stored in the app-private `covers/` directory. A cover can be replaced from the library item's menu.
 - Room stores the library and last-played metadata. Removing a library item removes only the app's copy, not the original selected file.
-- The player uses `WebViewAssetLoader` HTTPS-style local URLs, disables file/content access, blocks external navigation, and handles a crashed WebView renderer without crashing the launcher.
+- The player uses `WebViewAssetLoader` HTTPS-style local URLs, disables file/content access, normally blocks external navigation, and handles a crashed WebView renderer without crashing the launcher.
+- Normal launches keep Ruffle networking at `internal` and Flash `ExternalInterface` script access disabled. From a game's menu, choose **Test with extra Ruffle permissions** to opt into either permission (or both) for that launch only. Use these options only for SWFs you trust. External network access is limited to HTTPS by the WebView; platform cross-origin and server policies still apply.
+- The player’s **LOGS** control is available during gameplay. It captures Ruffle warnings/errors, WebView resource failures, and renderer crashes; reports redact URLs' query strings, credential-like values, and local device paths before copying or sharing.
 - The four touch keys are separate views. Only the visible key circles consume touch events; the rest of the screen remains a normal WebView touch surface.
 
 ## Ruffle and compatibility
 
 Ruffle is the practical fit for a Java app because its official self-hosted WebAssembly player can be embedded offline in Android WebView. The official Ruffle Android app is a native Rust/Kotlin application, not a Java embeddable engine/library, so it is not a drop-in replacement for this Java project.
 
-Ruffle implements a substantial but incomplete portion of Flash. Some SWFs, especially those relying on unsupported Flash APIs, external network resources, or unusual timing/input behavior, may not work. No app can guarantee zero crashes or 100% compatibility for every SWF and Android WebView version. This project handles common player and renderer failures gracefully and keeps the runtime replaceable by changing the pinned release in `app/build.gradle`.
+Ruffle implements a substantial but incomplete portion of Flash. Some SWFs, especially those relying on unsupported Flash APIs, game-specific `ExternalInterface` callbacks, external network resources, or unusual timing/input behavior, may not work. Enabling script access permits a trusted SWF to call JavaScript on the player page; it does not create game-specific callback implementations that the SWF may expect. No app can guarantee zero crashes or 100% compatibility for every SWF and Android WebView version. This project handles common player and renderer failures gracefully and keeps the runtime replaceable by changing the pinned release in `app/build.gradle`.
 
 The graphics quality menu sets Ruffle's initial `Stage.quality` to Low, Medium, or High. A SWF can change its own quality at runtime; Ruffle does not expose a supported setting that prevents the game from doing so. Stage scaling defaults to centered `showAll` to preserve the game's aspect ratio.
 

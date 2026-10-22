@@ -266,14 +266,17 @@ public class MainActivity extends ComponentActivity implements GameAdapter.Liste
 
     @Override
     public void onLaunch(GameEntity game) {
-        Intent intent = new Intent(this, GameActivity.class);
-        intent.putExtra(GameActivity.EXTRA_GAME_ID, game.id);
-        startActivity(intent);
+        launchGame(game, false, false);
     }
 
     @Override
     public void onOpenMenu(GameEntity game) {
-        String[] options = {"Change cover", "Rename", "Remove from library"};
+        String[] options = {
+                "Change cover",
+                "Rename",
+                "Remove from library",
+                "Test with extra Ruffle permissions"
+        };
         new android.app.AlertDialog.Builder(this)
                 .setTitle(game.title)
                 .setItems(options, (dialog, index) -> {
@@ -284,10 +287,42 @@ public class MainActivity extends ComponentActivity implements GameAdapter.Liste
                         renameGame(game);
                     } else if (index == 2) {
                         confirmDelete(game);
+                    } else if (index == 3) {
+                        confirmPermissionTest(game);
                     }
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private void confirmPermissionTest(GameEntity game) {
+        boolean[] selected = {false, false};
+        String[] permissions = {
+                "Allow external network access (HTTPS)",
+                "Allow Flash-to-JavaScript access (ExternalInterface)"
+        };
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Test extra access for this game?")
+                .setMessage("Only use these permissions with a SWF you trust. Network access lets it contact external hosts. Script access lets it call JavaScript on the player page. These choices apply to this launch only.")
+                .setMultiChoiceItems(permissions, selected,
+                        (dialog, which, isChecked) -> selected[which] = isChecked)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Launch test", (dialog, which) -> {
+                    if (!selected[0] && !selected[1]) {
+                        showMessage("Choose at least one permission for the test.");
+                        return;
+                    }
+                    launchGame(game, selected[0], selected[1]);
+                })
+                .show();
+    }
+
+    private void launchGame(GameEntity game, boolean allowNetworking, boolean allowScriptAccess) {
+        Intent intent = new Intent(this, GameActivity.class);
+        intent.putExtra(GameActivity.EXTRA_GAME_ID, game.id);
+        intent.putExtra(PlayerActivity.EXTRA_ALLOW_NETWORKING, allowNetworking);
+        intent.putExtra(PlayerActivity.EXTRA_ALLOW_SCRIPT_ACCESS, allowScriptAccess);
+        startActivity(intent);
     }
 
     private void renameGame(GameEntity game) {
